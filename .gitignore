@@ -1,7 +1,18 @@
-venv/
-sem6/
+# Mac
+.DS_Store
+
+# Python
 __pycache__/
 *.pyc
-.DS_Store
+
+# Virtual env
+venv/
+sem6/
+
+# Data & models
+data/
+*.pth
 *.pt
-node_modules/
+
+# YOLO weights
+yolov8n.pt
