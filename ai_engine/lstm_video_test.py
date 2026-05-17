@@ -14,12 +14,12 @@ resnet.fc = nn.Identity()
 resnet = resnet.to(device)
 resnet.eval()
 
-# -------- LSTM MODEL (MATCH TRAINING) --------
+# -------- LSTM MODEL --------
 class LSTMModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.lstm = nn.LSTM(512, 128, batch_first=True)
-        self.dropout = nn.Dropout(0.5)   # 🔥 MUST MATCH TRAINING
+        self.dropout = nn.Dropout(0.5)
         self.fc = nn.Linear(128, 2)
 
     def forward(self, x):
@@ -42,69 +42,82 @@ transform = transforms.Compose([
     )
 ])
 
-# -------- VIDEO --------
-video_path = "../data/test_video1.mp4"
+# -------- LOAD VIDEO --------
+video_path = "../data/test_video3.mp4"
 cap = cv2.VideoCapture(video_path)
 
-sequence = []
-SEQ_LEN = 20   # 🔥 match training
-
-violence_scores = []
-
-# 🔥 Motion tracking (important)
-ret, prev_frame = cap.read()
-prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+frames_list = []
 
 while True:
     ret, frame = cap.read()
     if not ret:
         break
+    frames_list.append(frame)
 
-    # -------- MOTION --------
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    flow = cv2.calcOpticalFlowFarneback(
-        prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0
-    )
-
-    magnitude, _ = cv2.cartToPolar(flow[...,0], flow[...,1])
-    motion_score = np.mean(magnitude)
-
-    prev_gray = gray
-
-    # -------- PREPROCESS --------
-    img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(img)
-    img = transform(img).unsqueeze(0).to(device)
-
-    # -------- FEATURE --------
-    with torch.no_grad():
-        feature = resnet(img)
-
-    sequence.append(feature.squeeze(0))
-
-    if len(sequence) > SEQ_LEN:
-        sequence.pop(0)
-
-    # -------- PREDICTION --------
-    if len(sequence) == SEQ_LEN:
-        seq_tensor = torch.stack(sequence).unsqueeze(0).to(device)
-
-        with torch.no_grad():
-            output = model(seq_tensor)
-            probs = torch.softmax(output, dim=1)
-
-        violence_prob = probs[0][1].item()
-
-        # 🔥 COMBINE WITH MOTION (CRITICAL FIX)
-        if motion_score > 2.5:
-            violence_scores.append(violence_prob)
-        else:
-            violence_scores.append(violence_prob * 0.3)  # dampen false positives
-
-# -------- FINAL DECISION --------
 cap.release()
 
+if len(frames_list) < 20:
+    print("❌ Video too short")
+    exit()
+
+SEQ_LEN = 20
+window_size = SEQ_LEN
+step = SEQ_LEN // 2
+
+violence_scores = []
+
+# -------- MOTION PREP --------
+prev_gray = cv2.cvtColor(frames_list[0], cv2.COLOR_BGR2GRAY)
+
+# -------- MULTI-WINDOW SCAN --------
+for start in range(0, len(frames_list) - window_size, step):
+
+    chunk = frames_list[start:start + window_size]
+
+    sequence = []
+    motion_values = []
+
+    for i, frame in enumerate(chunk):
+
+        # -------- MOTION --------
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        flow = cv2.calcOpticalFlowFarneback(
+            prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0
+        )
+
+        magnitude, _ = cv2.cartToPolar(flow[...,0], flow[...,1])
+        motion_values.append(np.mean(magnitude))
+
+        prev_gray = gray
+
+        # -------- FEATURE --------
+        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(img)
+        img = transform(img).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            feature = resnet(img)
+
+        sequence.append(feature.squeeze(0))
+
+    # -------- MODEL PREDICTION --------
+    seq_tensor = torch.stack(sequence).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        output = model(seq_tensor)
+        probs = torch.softmax(output, dim=1)
+
+    violence_prob = probs[0][1].item()
+    avg_motion = np.mean(motion_values)
+
+    # -------- COMBINE MOTION --------
+    if avg_motion > 2.5:
+        violence_scores.append(violence_prob)
+    else:
+        violence_scores.append(violence_prob * 0.3)
+
+# -------- FINAL DECISION --------
 if len(violence_scores) > 0:
     avg_score = sum(violence_scores) / len(violence_scores)
     max_score = max(violence_scores)
@@ -115,12 +128,12 @@ else:
 print(f"Average Violence Score: {avg_score:.2f}")
 print(f"Max Violence Score: {max_score:.2f}")
 
-# 🔥 IMPROVED DECISION LOGIC
-if max_score > 0.85 and avg_score > 0.2:
-    print("🚨 HIGH VIOLENCE DETECTED (strong peak)")
-elif max_score > 0.7 and avg_score > 0.15:
+# -------- DECISION LOGIC --------
+if max_score > 0.85:
+    print("🚨 HIGH VIOLENCE (peak detected)")
+elif avg_score > 0.4:
+    print("⚠️ SUSTAINED VIOLENCE")
+elif max_score > 0.6:
     print("⚠️ POSSIBLE VIOLENCE")
-elif avg_score > 0.35:
-    print("⚠️ SUSTAINED ACTIVITY")
 else:
     print("✅ NON-VIOLENCE")

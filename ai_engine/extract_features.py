@@ -3,15 +3,17 @@ import torchvision.models as models
 from torchvision import transforms
 from PIL import Image
 import os
+from sklearn.model_selection import train_test_split
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load ResNet
+# -------- LOAD RESNET --------
 resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 resnet.fc = torch.nn.Identity()
 resnet = resnet.to(device)
 resnet.eval()
 
+# -------- TRANSFORM --------
 transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ToTensor(),
@@ -22,48 +24,77 @@ transform = transforms.Compose([
 ])
 
 data_path = "../data/sequences"
-save_path = "../data/features"
 
-os.makedirs(save_path, exist_ok=True)
+# 🔥 NEW SAVE STRUCTURE
+train_save_path = "../data/features/train"
+val_save_path = "../data/features/val"
 
-SEQ_LEN = 20   # 🔥 increased sequence length
+os.makedirs(train_save_path, exist_ok=True)
+os.makedirs(val_save_path, exist_ok=True)
 
+SEQ_LEN = 20
+
+# -------- PROCESS EACH CLASS --------
 for label, category in enumerate(["fight", "non_fight"]):
 
     class_path = os.path.join(data_path, category)
 
-    for video_folder in os.listdir(class_path):
+    video_folders = [
+    f for f in os.listdir(class_path)
+    if os.path.isdir(os.path.join(class_path, f))
+]
 
-        video_path = os.path.join(class_path, video_folder)
+    # 🔥 SPLIT BEFORE FEATURE EXTRACTION (CRITICAL FIX)
+    train_videos, val_videos = train_test_split(
+        video_folders, test_size=0.2, random_state=42
+    )
 
-        frames = sorted(os.listdir(video_path))
+    print(f"\nCategory: {category}")
+    print(f"Train videos: {len(train_videos)}, Val videos: {len(val_videos)}")
 
-        # 🔥 Skip very short videos
-        if len(frames) < SEQ_LEN:
-            continue
+    # -------- FUNCTION TO PROCESS VIDEOS --------
+    def process_videos(video_list, save_path):
 
-        # 🔥 SAMPLE FRAMES ACROSS WHOLE VIDEO (CRITICAL FIX)
-        indices = torch.linspace(0, len(frames)-1, steps=SEQ_LEN).long()
-        selected_frames = [frames[i] for i in indices]
+        for video_folder in video_list:
 
-        features = []
+            video_path = os.path.join(class_path, video_folder)
+            frames = sorted(os.listdir(video_path))
 
-        for img_name in selected_frames:
+            if len(frames) < SEQ_LEN:
+                continue
 
-            img_path = os.path.join(video_path, img_name)
-            img = Image.open(img_path).convert("RGB")
-            img = transform(img).unsqueeze(0).to(device)
+            # Sample frames across full video
+            indices = torch.linspace(0, len(frames)-1, steps=SEQ_LEN).long()
+            selected_frames = [frames[i] for i in indices]
 
-            with torch.no_grad():
-                feat = resnet(img)
+            features = []
 
-            features.append(feat.squeeze().cpu())
+            for img_name in selected_frames:
 
-        # Save only if correct length
-        if len(features) == SEQ_LEN:
-            features_tensor = torch.stack(features)
+                img_path = os.path.join(video_path, img_name)
+                img = Image.open(img_path).convert("RGB")
+                img = transform(img).unsqueeze(0).to(device)
 
-            save_file = os.path.join(save_path, f"{category}_{video_folder}.pt")
-            torch.save((features_tensor, label), save_file)
+                with torch.no_grad():
+                    feat = resnet(img)
 
-        print(f"Processed {video_folder}")
+                features.append(feat.squeeze().cpu())
+
+            if len(features) == SEQ_LEN:
+                features_tensor = torch.stack(features)
+
+                save_file = os.path.join(
+                    save_path, f"{category}_{video_folder}.pt"
+                )
+
+                torch.save((features_tensor, label), save_file)
+
+            print(f"Processed {category} → {video_folder}")
+
+    # -------- PROCESS TRAIN --------
+    process_videos(train_videos, train_save_path)
+
+    # -------- PROCESS VALIDATION --------
+    process_videos(val_videos, val_save_path)
+
+print("\n✅ Feature extraction complete (train + validation split)")

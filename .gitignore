@@ -1,16 +1,25 @@
-# Mac
+# macOS
 .DS_Store
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
 
-# Virtual env
+# Virtual environments
 venv/
 sem6/
 
-# Data & models
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit cache
+.streamlit/
+
+# Data
 data/
+
+# Trained models
 *.pth
 *.pt
 
