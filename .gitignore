@@ -1,7 +1,27 @@
-venv/
-sem6/
+# macOS
+.DS_Store
+
+# Python
 __pycache__/
 *.pyc
-.DS_Store
+*.pyo
+
+# Virtual environments
+venv/
+sem6/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit cache
+.streamlit/
+
+# Data
+data/
+
+# Trained models
+*.pth
 *.pt
-node_modules/
+
+# YOLO weights
+yolov8n.pt
